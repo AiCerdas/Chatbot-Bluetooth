@@ -1,249 +1,74 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Bluetooth Chat</title>
-    <style>
-        /* CSS Sederhana & Responsif */
-        body {
-            font-family: sans-serif;
-            margin: 0;
-            padding: 0;
-            background-color: #f4f7f6;
-            display: flex;
-            flex-direction: column;
-            min-height: 100vh;
-        }
-        .header {
-            background-color: #075E54;
-            color: white;
-            padding: 15px;
-            text-align: center;
-        }
-        .chat-container {
-            flex-grow: 1;
-            padding: 10px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            max-width: 600px;
-            margin: 0 auto;
-            width: 100%;
-        }
-        .message {
-            margin: 5px 0;
-            padding: 10px;
-            border-radius: 10px;
-            max-width: 70%;
-            word-wrap: break-word;
-        }
-        .sent {
-            align-self: flex-end;
-            background-color: #DCF8C6;
-        }
-        .received {
-            align-self: flex-start;
-            background-color: #FFFFFF;
-            border: 1px solid #ddd;
-        }
-        .status {
-            text-align: center;
-            padding: 10px 0;
-            color: #888;
-        }
-        .input-container {
-            display: flex;
-            padding: 10px;
-            border-top: 1px solid #ddd;
-            background-color: #fff;
-            position: sticky;
-            bottom: 0;
-            max-width: 600px;
-            margin: 0 auto;
-            width: 100%;
-        }
-        #messageInput {
-            flex-grow: 1;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 20px;
-            margin-right: 10px;
-            font-size: 16px;
-        }
-        #sendButton, #connectButton {
-            background-color: #075E54;
-            color: white;
-            border: none;
-            padding: 10px 15px;
-            border-radius: 20px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        #connectButton {
-            width: 100%;
-            margin-bottom: 10px;
-        }
-        .error {
-            color: red;
-            text-align: center;
-            padding: 20px;
-            font-weight: bold;
-        }
-    </style>
+<meta charset="UTF-8">
+<title>Abidin BLE Chat 🔵</title>
+<style>
+  body { font-family: sans-serif; background: #0a84ff; color: #fff; text-align: center; padding: 40px; }
+  .chat-box { background: rgba(255,255,255,0.15); border-radius: 10px; padding: 20px; max-width: 400px; margin: auto; }
+  input { width: 80%; padding: 8px; border-radius: 8px; border: none; margin-top: 10px; }
+  button { padding: 10px 15px; border: none; border-radius: 8px; background: #fff; color: #0a84ff; font-weight: bold; cursor: pointer; }
+  #messages { background: rgba(255,255,255,0.1); border-radius: 8px; padding: 10px; text-align: left; height: 200px; overflow-y: auto; margin-bottom: 10px; }
+</style>
 </head>
 <body>
+<h1>Abidin BLE Chat 💬</h1>
+<div class="chat-box">
+  <div id="messages"></div>
+  <input id="msg" placeholder="Tulis pesan..." />
+  <button id="sendBtn">Kirim</button><br><br>
+  <button id="connectBtn">🔗 Hubungkan BLE</button>
+</div>
 
-    <div class="header">
-        <h2>Web Bluetooth Chat</h2>
-    </div>
+<script>
+let writeChar, notifyChar;
 
-    <div id="compatibility-check"></div>
+async function connectBLE() {
+  try {
+    const device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb']
+    });
 
-    <div class="chat-container" id="chatContainer">
-        <button id="connectButton" onclick="connectBluetooth()">🔗 Hubungkan Bluetooth</button>
-        <div class="status" id="connectionStatus">Status: Belum Terhubung</div>
-    </div>
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
+    
+    writeChar = await service.getCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb');
+    notifyChar = writeChar; // sama characteristic bisa read/write
 
-    <div class="input-container">
-        <input type="text" id="messageInput" placeholder="Ketik pesan..." disabled>
-        <button id="sendButton" onclick="sendMessage()" disabled>Kirim</button>
-    </div>
+    await notifyChar.startNotifications();
+    notifyChar.addEventListener('characteristicvaluechanged', handleIncoming);
 
-    <script>
-        // UUID STANDAR UNTUK BLE UART SERVICE (Misalnya digunakan pada beberapa modul BLE)
-        // Perangkat Peripheral harus menggunakan UUID yang sama.
-        const UART_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-        // Characteristic untuk menerima data (TX/Transmit dari Peripheral ke Central)
-        const RX_CHARACTERISTIC_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
-        // Characteristic untuk mengirim data (RX/Receive oleh Peripheral dari Central)
-        const TX_CHARACTERISTIC_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+    addMsg("✅ Terhubung ke " + device.name);
+  } catch (e) {
+    addMsg("❌ Gagal: " + e);
+  }
+}
 
-        let bleDevice;
-        let rxCharacteristic; // Untuk Menerima pesan
-        let txCharacteristic; // Untuk Mengirim pesan
+function handleIncoming(event) {
+  const decoder = new TextDecoder();
+  const msg = decoder.decode(event.target.value);
+  addMsg("📥 Dari perangkat: " + msg);
+}
 
-        const chatContainer = document.getElementById('chatContainer');
-        const messageInput = document.getElementById('messageInput');
-        const sendButton = document.getElementById('sendButton');
-        const connectionStatus = document.getElementById('connectionStatus');
-        const connectButton = document.getElementById('connectButton');
-        const encoder = new TextEncoder('utf-8');
-        const decoder = new TextDecoder('utf-8');
+async function sendMsg() {
+  if (!writeChar) return addMsg("⚠️ Hubungkan dulu!");
+  const text = document.getElementById('msg').value;
+  if (!text) return;
+  const encoder = new TextEncoder();
+  await writeChar.writeValue(encoder.encode(text));
+  addMsg("📤 Kamu: " + text);
+  document.getElementById('msg').value = '';
+}
 
-        // --- Pengecekan Dukungan Web Bluetooth ---
-        if (!navigator.bluetooth) {
-            document.getElementById('compatibility-check').innerHTML = `
-                <div class="error">
-                    ❌ Browser Anda (atau koneksi) tidak mendukung Web Bluetooth API, atau tidak dalam konteks HTTPS.
-                </div>`;
-            connectButton.disabled = true;
-        }
+function addMsg(text) {
+  const box = document.getElementById('messages');
+  box.innerHTML += `<div>${text}</div>`;
+  box.scrollTop = box.scrollHeight;
+}
 
-        // --- Fungsi UI ---
-        function appendMessage(text, type) {
-            const msgDiv = document.createElement('div');
-            msgDiv.classList.add('message', type);
-            msgDiv.textContent = text;
-            chatContainer.appendChild(msgDiv);
-            // Scroll ke bawah
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
-
-        function updateStatus(text, isError = false) {
-            connectionStatus.textContent = `Status: ${text}`;
-            if (isError) {
-                connectionStatus.style.color = 'red';
-            } else {
-                connectionStatus.style.color = '#075E54';
-            }
-        }
-
-        function toggleControls(connected) {
-            messageInput.disabled = !connected;
-            sendButton.disabled = !connected;
-            connectButton.textContent = connected ? '✅ Terhubung' : '🔗 Hubungkan Bluetooth';
-            connectButton.disabled = connected;
-        }
-
-        // --- Fungsi Bluetooth ---
-
-        async function connectBluetooth() {
-            updateStatus('Mencari perangkat...');
-            try {
-                // Meminta perangkat BLE
-                bleDevice = await navigator.bluetooth.requestDevice({
-                    filters: [{ services: [UART_SERVICE_UUID] }],
-                    optionalServices: [UART_SERVICE_UUID]
-                });
-
-                updateStatus(`Menghubungkan ke ${bleDevice.name || 'Perangkat Anonim'}...`);
-
-                bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
-                const server = await bleDevice.gatt.connect();
-
-                // Dapatkan Service
-                const service = await server.getPrimaryService(UART_SERVICE_UUID);
-
-                // Dapatkan Characteristic Kirim (TX) dan Terima (RX)
-                txCharacteristic = await service.getCharacteristic(TX_CHARACTERISTIC_UUID); // Untuk kirim
-                rxCharacteristic = await service.getCharacteristic(RX_CHARACTERISTIC_UUID); // Untuk terima
-
-                // Aktifkan Notifikasi untuk menerima pesan
-                await rxCharacteristic.startNotifications();
-                rxCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
-
-                updateStatus('Terhubung! Siap untuk chat.');
-                toggleControls(true);
-
-            } catch (error) {
-                updateStatus(`Gagal terhubung: ${error.message}`, true);
-                toggleControls(false);
-            }
-        }
-
-        function onDisconnected(event) {
-            const device = event.target;
-            updateStatus(`Koneksi terputus dari ${device.name || 'Perangkat Anonim'}`, true);
-            appendMessage("Koneksi terputus", 'status');
-            toggleControls(false);
-            bleDevice = null;
-        }
-
-        async function sendMessage() {
-            const message = messageInput.value.trim();
-            if (message === "") return;
-
-            if (txCharacteristic && bleDevice.gatt.connected) {
-                try {
-                    // Kirim pesan sebagai ArrayBuffer
-                    const data = encoder.encode(message);
-                    await txCharacteristic.writeValue(data);
-
-                    appendMessage(message, 'sent');
-                    messageInput.value = ''; // Kosongkan input
-                } catch (error) {
-                    updateStatus(`Gagal mengirim pesan: ${error.message}`, true);
-                    onDisconnected({ target: bleDevice });
-                }
-            } else {
-                updateStatus('Tidak terhubung. Silakan hubungkan kembali.', true);
-            }
-        }
-
-        function handleCharacteristicValueChanged(event) {
-            const value = event.target.value;
-            // Ubah ArrayBuffer menjadi string
-            const receivedText = decoder.decode(value);
-            appendMessage(receivedText, 'received');
-        }
-
-        // Event listener untuk tombol 'Enter' pada input
-        messageInput.addEventListener('keypress', function (e) {
-            if (e.key === 'Enter' && !sendButton.disabled) {
-                sendMessage();
-            }
-        });
-    </script>
+document.getElementById('connectBtn').onclick = connectBLE;
+document.getElementById('sendBtn').onclick = sendMsg;
+</script>
 </body>
 </html>
